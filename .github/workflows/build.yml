@@ -31,15 +31,26 @@ jobs:
       - name: Verify PE outputs
         run: |
           file dist/oobelaunch.exe dist/winbrand.dll
+          file runtime/DUser.dll runtime/dui72.dll
           x86_64-w64-mingw32-objdump -p dist/oobelaunch.exe | grep -q 'pei-x86-64'
           x86_64-w64-mingw32-objdump -p dist/winbrand.dll | grep -q 'pei-x86-64'
+          x86_64-w64-mingw32-objdump -p runtime/DUser.dll | grep -q 'pei-x86-64'
+          x86_64-w64-mingw32-objdump -p runtime/dui72.dll | grep -q 'pei-x86-64'
           x86_64-w64-mingw32-objdump -p dist/winbrand.dll | grep -q 'BrandingLoadBitmap'
+
+      - name: Assemble setup kit
+        run: |
+          mkdir -p dist/kit/runtime
+          cp dist/oobelaunch.exe dist/winbrand.dll dist/kit/
+          cp prepare-vista-oobe.bat install-system-msoobe.ps1 \
+            restore-system-msoobe.bat restore-system-msoobe.ps1 README.md dist/kit/
+          cp runtime/DUser.dll runtime/dui72.dll dist/kit/runtime/
+          if [ -d branding ]; then cp -R branding dist/kit/; fi
+          (cd dist/kit && zip -qr ../vista-oobe-kit.zip .)
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-oobe-binaries
-          path: |
-            dist/oobelaunch.exe
-            dist/winbrand.dll
+          name: vista-oobe-kit
+          path: dist/vista-oobe-kit.zip
           if-no-files-found: error

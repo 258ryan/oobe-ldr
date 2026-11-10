@@ -21,17 +21,18 @@ Windows servicing can replace the system binary, and replacing it can prevent se
   remain untranslated. The Windows native fallback keeps its original files and language resources.
 * The compatibility hooks are process-local hooks installed by the `winbrand.dll` proxy inside the Vista
   wizard—not system-wide hooks—and are not removed by replacing the System32 launcher.
-* The supplied modded `DUser.dll` and `dui72.dll` are staged beside `vistamsoobe.exe` as `DUser.dll` and
+* The bundled modded `DUser.dll` and `dui72.dll` are staged beside `vistamsoobe.exe` as `DUser.dll` and
   `DUI70.dll` (the latter's internal PE name). Windows' normal app-local DLL search then selects them for
   the Vista wizard rather than replacing the OS copies. The proxy logs the resolved module paths as `[module]`.
 * Everything is written to `C:\Windows\Temp\vista-oobe.log`.
 
 ## Steps (in the Windows 10 VM)
 
-1. Copy to the VM: this folder, the Vista `oobe` folder (from the .tar.gz), and the supplied modded `DUser.dll`
-   and `dui72.dll`.
+1. Download and extract the `vista-oobe-kit.zip` artifact from the latest successful **Build Windows binaries**
+   Actions run, then copy the Vista `oobe` folder (from the .tar.gz) into the VM. The kit includes the launcher,
+   proxy, modded compatibility DLLs, preparation script, and restore scripts.
 2. In the VM, take a snapshot. From an elevated prompt run
-   `prepare-vista-oobe.bat C:\path\to\vista\oobe C:\path\to\modded\duser.dll C:\path\to\dui72.dll`.
+   `prepare-vista-oobe.bat C:\path\to\vista\oobe`.
    It copies the wizard and its optional background into `C:\vista-oobe`, preserves the original OOBE folder,
    and installs the launcher as `System32\oobe\msoobe.exe`. It no longer grants broad permissions on the OOBE folder.
 3. Run `%windir%\System32\Sysprep\sysprep.exe /oobe /reboot` - Windows restarts into OOBE, which should now show
