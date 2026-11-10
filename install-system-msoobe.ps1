@@ -61,6 +61,8 @@ foreach ($required in @(
     (Join-Path $vistaOobe 'msoobe.exe'),
     (Join-Path $vistaOobe 'vistamsoobe.exe'),
     (Join-Path $vistaOobe 'setup.exe'),
+    (Join-Path $vistaOobe 'vista-setup.exe'),
+    (Join-Path $vistaOobe 'winsetup.dll'),
     (Join-Path $root 'oobelaunch.exe')
 )) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {

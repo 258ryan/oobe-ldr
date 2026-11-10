@@ -27,12 +27,15 @@ jobs:
             -o dist/oobelaunch.exe oobelaunch.c -lwtsapi32 -luserenv
           x86_64-w64-mingw32-gcc -O2 -Wall -Werror -shared \
             -o dist/winbrand.dll winbrand_proxy.c winbrand.def -static-libgcc -lkernel32 -lgdi32
+          x86_64-w64-mingw32-gcc -O2 -Wall -Werror -mwindows -municode -static \
+            -o dist/oobesetup.exe oobesetup.c
 
       - name: Verify PE outputs
         run: |
-          file dist/oobelaunch.exe dist/winbrand.dll
+          file dist/oobelaunch.exe dist/oobesetup.exe dist/winbrand.dll
           file runtime/DUser.dll runtime/dui72.dll
           x86_64-w64-mingw32-objdump -p dist/oobelaunch.exe | grep -q 'pei-x86-64'
+          x86_64-w64-mingw32-objdump -p dist/oobesetup.exe | grep -q 'pei-x86-64'
           x86_64-w64-mingw32-objdump -p dist/winbrand.dll | grep -q 'pei-x86-64'
           x86_64-w64-mingw32-objdump -p runtime/DUser.dll | grep -q 'pei-x86-64'
           x86_64-w64-mingw32-objdump -p runtime/dui72.dll | grep -q 'pei-x86-64'
@@ -41,7 +44,7 @@ jobs:
       - name: Assemble setup kit
         run: |
           mkdir -p dist/kit/runtime
-          cp dist/oobelaunch.exe dist/winbrand.dll dist/kit/
+          cp dist/oobelaunch.exe dist/oobesetup.exe dist/winbrand.dll dist/kit/
           cp prepare-vista-oobe.bat install-system-msoobe.ps1 \
             restore-system-msoobe.bat restore-system-msoobe.ps1 README.md dist/kit/
           cp runtime/DUser.dll runtime/dui72.dll dist/kit/runtime/

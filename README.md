@@ -11,8 +11,12 @@ Windows servicing can replace these files, and replacing the folder can prevent 
 
 * Windows' OOBE loader starts the replacement `msoobe.exe` and waits for its exit code.
 * The replacement starts the Vista wizard, renamed `vistamsoobe.exe`, with the original arguments, waits, and returns its exit code.
-* The Vista OOBE folder's `setup.exe` and all other source files, language folders, and dependencies are included in
-  the system-folder replacement. Windows servicing and specialize/device-setup behavior may be affected.
+* The Vista OOBE folder's setup host is staged as `vista-setup.exe`; the replacement `setup.exe` wrapper launches it
+  with the OOBE directory as the working directory and DLL search directory so it can resolve `winsetup.dll` beside it.
+  The wrapper verifies that `winsetup.dll` is present and logs its launch result to `C:\Windows\Temp\vista-oobe.log`.
+  If Windows still reports it cannot load after the wrapper confirms the file exists, the cause is likely a missing
+  dependency or an architecture/format mismatch rather than the file's location. Windows servicing and
+  specialize/device-setup behavior may be affected.
 * If the Vista wizard cannot start or fails, the launcher attempts to start the preserved Windows wizard from
   `C:\vista-oobe\original-oobe\msoobe.exe`. This is only a wizard-level fallback; it does not restore the replaced
   folder or guarantee Windows setup can continue. Use the restore script or revert the snapshot for a full rollback.
