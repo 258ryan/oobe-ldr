@@ -14,7 +14,7 @@ function Replace-SystemFile {
         [string]$Destination
     )
 
-    $directory = Split-Path -LiteralPath $Destination -Parent
+    $directory = [IO.Path]::GetDirectoryName($Destination)
     $temporaryBackup = Join-Path $directory ("msoobe.exe.{0}.bak" -f [Guid]::NewGuid().ToString('N'))
     try {
         [IO.File]::Replace($Source, $Destination, $temporaryBackup)
