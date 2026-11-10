@@ -75,7 +75,8 @@ static int RunWindowsOwn(const wchar_t* original, const wchar_t* why) {
     }
     STARTUPINFOW si; memset(&si, 0, sizeof(si)); si.cb = sizeof(si); GetStartupInfoW(&si);
     PROCESS_INFORMATION pi;
-    if (!CreateProcessW(app, line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
+    LPCWSTR workingDirectory = g_directReplacement ? L"C:\\vista-oobe\\original-oobe" : NULL;
+    if (!CreateProcessW(app, line, NULL, NULL, TRUE, 0, NULL, workingDirectory, &si, &pi)) {
         Log(L"ERROR: could not start Windows' msoobe.exe (%lu)", GetLastError());
         return 1;
     }

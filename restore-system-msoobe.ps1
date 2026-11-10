@@ -2,26 +2,29 @@ $ErrorActionPreference = 'Stop'
 
 $root = 'C:\vista-oobe'
 $systemOobe = Join-Path $env:windir 'System32\oobe'
-$target = Join-Path $systemOobe 'msoobe.exe'
 $backup = Join-Path $root 'original-oobe'
-$backupExe = Join-Path $backup 'msoobe.exe'
-$aclBackup = Join-Path $backup 'msoobe.acl.sddl'
-$replacement = "$target.restore"
+$aclManifest = Join-Path $root 'original-oobe-acl.xml'
 
-function Replace-SystemFile {
-    param(
-        [string]$Source,
-        [string]$Destination
-    )
+function Restore-OobeAclManifest {
+    param([string]$Path, [string]$Manifest)
 
-    $directory = [IO.Path]::GetDirectoryName($Destination)
-    $temporaryBackup = Join-Path $directory ("msoobe.exe.{0}.bak" -f [Guid]::NewGuid().ToString('N'))
-    try {
-        [IO.File]::Replace($Source, $Destination, $temporaryBackup)
-    } finally {
-        if (Test-Path -LiteralPath $temporaryBackup) {
-            Remove-Item -LiteralPath $temporaryBackup -Force
+    foreach ($entry in (Import-Clixml -LiteralPath $Manifest | Sort-Object {
+        if ($_.RelativePath -eq '.') { 0 } else { ($_.RelativePath -split '\\').Count }
+    })) {
+        $destination = if ($entry.RelativePath -eq '.') {
+            $Path
+        } else {
+            Join-Path $Path $entry.RelativePath
         }
+        if (-not (Test-Path -LiteralPath $destination)) { continue }
+
+        $acl = if (Test-Path -LiteralPath $destination -PathType Container) {
+            New-Object System.Security.AccessControl.DirectorySecurity
+        } else {
+            New-Object System.Security.AccessControl.FileSecurity
+        }
+        $acl.SetSecurityDescriptorSddlForm([string]$entry.Sddl)
+        Set-Acl -LiteralPath $destination -AclObject $acl
     }
 }
 
@@ -33,39 +36,47 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 if (-not [Environment]::Is64BitProcess) {
     throw 'Run this script from 64-bit PowerShell so System32 resolves to the native system directory.'
 }
-if (Get-Process -Name msoobe -ErrorAction SilentlyContinue) {
-    throw 'msoobe.exe is running. Shut down setup before restoring the system binary.'
+foreach ($processName in @('msoobe', 'setup', 'setuphost', 'oobe', 'oobeldr')) {
+    if (Get-Process -Name $processName -ErrorAction SilentlyContinue) {
+        throw "$processName.exe is running. Shut down setup before restoring the OOBE folder."
+    }
 }
-if (-not (Test-Path -LiteralPath $backupExe -PathType Leaf)) {
-    throw "The preserved Windows executable was not found: $backupExe"
-}
-if (Test-Path -LiteralPath $replacement) {
-    throw "A staged restore already exists: $replacement. Inspect it before continuing."
+foreach ($file in @('msoobe.exe', 'setup.exe')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $backup $file) -PathType Leaf)) {
+        throw "The preserved Windows OOBE file was not found: $(Join-Path $backup $file)"
+    }
 }
 
-$originalAcl = if (Test-Path -LiteralPath $aclBackup) {
-    $savedAcl = New-Object System.Security.AccessControl.FileSecurity
-    $savedAcl.SetSecurityDescriptorSddlForm((Get-Content -LiteralPath $aclBackup -Raw))
-    $savedAcl
+& takeown.exe /A /R /D Y /F $systemOobe | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "takeown could not grant temporary OOBE folder access (exit code $LASTEXITCODE)." }
+& icacls.exe $systemOobe /grant '*S-1-5-32-544:F' /T /C | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "icacls could not grant temporary OOBE folder access (exit code $LASTEXITCODE)." }
+
+& robocopy.exe $backup $systemOobe /MIR /COPY:DAT /XF msoobe.acl.sddl setup.exe.acl.sddl /R:1 /W:1 /NFL /NDL /NJH /NJS /NP
+if ($LASTEXITCODE -ge 8) {
+    throw "Could not restore the original Windows OOBE folder (robocopy exit code $LASTEXITCODE)."
+}
+
+& icacls.exe $systemOobe /reset /T /C | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "icacls could not reset the restored OOBE permissions (exit code $LASTEXITCODE)." }
+& icacls.exe $systemOobe /setowner 'NT SERVICE\TrustedInstaller' /T /C | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Could not set TrustedInstaller ownership on the restored OOBE folder (exit code $LASTEXITCODE)." }
+
+if (Test-Path -LiteralPath $aclManifest -PathType Leaf) {
+    Restore-OobeAclManifest -Path $systemOobe -Manifest $aclManifest
 } else {
-    Get-Acl -LiteralPath $target
+    Write-Warning 'The full ACL manifest is missing; restoring saved executable ACLs and inherited defaults.'
+    foreach ($file in @('msoobe.exe', 'setup.exe')) {
+        $savedAclPath = Join-Path $backup "$file.acl.sddl"
+        $destination = Join-Path $systemOobe $file
+        if (Test-Path -LiteralPath $savedAclPath -PathType Leaf) {
+            $savedAcl = New-Object System.Security.AccessControl.FileSecurity
+            $savedAcl.SetSecurityDescriptorSddlForm((Get-Content -LiteralPath $savedAclPath -Raw))
+            Set-Acl -LiteralPath $destination -AclObject $savedAcl
+        }
+    }
 }
-
-& takeown.exe /A /F $target | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "takeown failed with exit code $LASTEXITCODE." }
-& icacls.exe $target /grant '*S-1-5-32-544:F' /C | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "icacls could not grant temporary access (exit code $LASTEXITCODE)." }
-
-Copy-Item -LiteralPath $backupExe -Destination $replacement
-Replace-SystemFile -Source $replacement -Destination $target
-try {
-    Set-Acl -LiteralPath $target -AclObject $originalAcl
-} catch {
-    & icacls.exe $target /reset /C | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "icacls could not reset the restored file ACL (exit code $LASTEXITCODE)." }
-}
-& icacls.exe $target /setowner 'NT SERVICE\TrustedInstaller' /C | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Could not restore TrustedInstaller ownership (exit code $LASTEXITCODE)." }
 
 Remove-Item -LiteralPath (Join-Path $root 'msoobe-launcher.sha256') -ErrorAction SilentlyContinue
-Write-Host "Restored the original Windows OOBE binary to $target"
+Remove-Item -LiteralPath (Join-Path $root 'setup-host.sha256') -ErrorAction SilentlyContinue
+Write-Host "Restored the original Windows OOBE folder from $backup"

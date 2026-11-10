@@ -1,16 +1,21 @@
 # Vista OOBE replacement on Windows 10 (VM only)
 
-**Use only in a disposable VM, after taking a snapshot.** The installer replaces the protected
-`%WINDIR%\System32\oobe\msoobe.exe` with this project's launcher; it does not use IFEO to redirect execution.
-The original Windows OOBE folder is backed up to `C:\vista-oobe\original-oobe` for launcher fallback and rollback.
-Windows servicing can replace the system binary, and replacing it can prevent setup from starting; keep the VM snapshot.
+**Use only in a disposable VM, after taking a snapshot.** The installer mirrors the complete staged Vista OOBE folder
+over `%WINDIR%\System32\oobe`, removing Windows OOBE files that are not in the Vista source. The staged `msoobe.exe`
+is this project's launcher; the Vista wizard is kept as `vistamsoobe.exe`. The original Windows OOBE folder and its
+file ACLs are saved for fallback and rollback. This does not replace Windows setup components located outside that
+folder, and Vista's setup host may not support every Windows 10 setup phase.
+Windows servicing can replace these files, and replacing the folder can prevent setup from starting; keep the VM snapshot.
 
 ## What it does
 
-* Windows' own OOBE loader starts the replacement `msoobe.exe` and waits for its exit code.
+* Windows' OOBE loader starts the replacement `msoobe.exe` and waits for its exit code.
 * The replacement starts the Vista wizard, renamed `vistamsoobe.exe`, with the original arguments, waits, and returns its exit code.
-* If the Vista wizard cannot start or fails, the replacement starts the preserved Windows wizard from
-  `C:\vista-oobe\original-oobe\msoobe.exe`. `C:\vista-oobe\disable.txt` selects the Windows wizard without trying Vista.
+* The Vista OOBE folder's `setup.exe` and all other source files, language folders, and dependencies are included in
+  the system-folder replacement. Windows servicing and specialize/device-setup behavior may be affected.
+* If the Vista wizard cannot start or fails, the launcher attempts to start the preserved Windows wizard from
+  `C:\vista-oobe\original-oobe\msoobe.exe`. This is only a wizard-level fallback; it does not restore the replaced
+  folder or guarantee Windows setup can continue. Use the restore script or revert the snapshot for a full rollback.
 * The Vista wizard imports `winbrand.dll`; the proxy `winbrand.dll` staged beside it is loaded first. It forwards
   `BrandingLoadBitmap` to the real one, fixes DUser's `SetGadgetRootInfo` (old 0x20-byte structure -> 0x30),
   records where the ordinal imports land (`shell32 #262/#754`, `userenv #206`, `Input #104-108`) and logs
@@ -33,14 +38,15 @@ Windows servicing can replace the system binary, and replacing it can prevent se
    proxy, modded compatibility DLLs, preparation script, and restore scripts.
 2. In the VM, take a snapshot. From an elevated prompt run
    `prepare-vista-oobe.bat C:\path\to\vista\oobe`.
-   It copies the wizard and its optional background into `C:\vista-oobe`, preserves the original OOBE folder,
-   and installs the launcher as `System32\oobe\msoobe.exe`. It no longer grants broad permissions on the OOBE folder.
+   It stages the complete Vista OOBE folder in `C:\vista-oobe\oobe`, preserves the original Windows folder and ACLs,
+   then replaces the contents of `System32\oobe`. The original files remain at `C:\vista-oobe\original-oobe` for
+   rollback and the launcher's Windows fallback.
 3. Run `%windir%\System32\Sysprep\sysprep.exe /oobe /reboot` - Windows restarts into OOBE, which should now show
    the Vista wizard.
 4. Send `C:\Windows\Temp\vista-oobe.log` if anything fails or the screen stays blank/transition screen.
 
-To restore the Windows binary, run `restore-system-msoobe.bat` elevated before starting OOBE, or revert the snapshot.
-Do not delete `C:\vista-oobe\original-oobe`; it contains both the fallback executable and the rollback copy.
+To restore the Windows OOBE folder, run `restore-system-msoobe.bat` elevated before starting OOBE, or revert the snapshot.
+Do not delete `C:\vista-oobe\original-oobe` or `C:\vista-oobe\original-oobe-acl.xml`; they are required for fallback and rollback.
 The legacy `ifeo-install.reg` no longer installs a debugger redirect and is not part of this flow.
 
 The update notes below describe diagnostics from earlier IFEO-based trials. Do not follow their historical
@@ -70,15 +76,15 @@ If you are stuck inside OOBE:
   (or `type C:\vista-oobe\vista-oobe.log`). To select Windows' own wizard, use
   `echo x > C:\vista-oobe\disable.txt`. To roll back the file replacement, run
   `powershell -NoProfile -ExecutionPolicy Bypass -File C:\vista-oobe\restore-system-msoobe.ps1`
-  from an elevated prompt, or revert the VM snapshot.
+  from an elevated prompt after setup/OOBE processes have stopped, or revert the VM snapshot. `disable.txt` only
+  selects Windows' `msoobe.exe`; it does not undo the complete folder replacement.
 * If OOBE restarts in a loop and Shift+F10 does not help: boot the VM into the Windows Recovery Environment
   (or from the Windows 10 ISO: Repair your computer > Troubleshoot > Command Prompt), find the Windows drive
   (try `dir C:\`, `dir D:\` ...) and run, with D: replaced by that drive:
       type D:\vista-oobe\vista-oobe.log
       type D:\Windows\Temp\vista-oobe.log
       echo x > D:\vista-oobe\disable.txt
-  If offline rollback is needed, restore `D:\Windows\System32\oobe\msoobe.exe` from
-  `D:\vista-oobe\original-oobe\msoobe.exe` after taking a copy of the current file, or revert the VM snapshot.
+  For offline rollback, revert the VM snapshot; replacing only `msoobe.exe` is not sufficient after the full-folder swap.
 * Or revert the snapshot, and use the Hyper-V / VirtualBox / VMware "attach virtual disk to another VM" feature to read
   `C:\vista-oobe\vista-oobe.log` from the crashed disk.
 
