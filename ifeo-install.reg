@@ -1,10 +1,7 @@
 Windows Registry Editor Version 5.00
 
-; From now on, when Windows starts msoobe.exe, C:\vista-oobe\oobelaunch.exe runs instead and starts the Vista wizard.
-; VM ONLY, after taking a snapshot.
-
-[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\msoobe.exe]
-"Debugger"="C:\\vista-oobe\\oobelaunch.exe"
+; Legacy Windows 10 OOBE settings only. The current install replaces System32\oobe\msoobe.exe directly;
+; do not add an IFEO Debugger value here. VM ONLY.
 
 ; Windows 10 OOBE extras (VM only)
 ; skip Windows 10's privacy experience

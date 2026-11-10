@@ -1,16 +1,14 @@
-/* oobelaunch.exe - redirects Windows 10's msoobe.exe to the Vista one, without replacing any Windows file.
+/* msoobe.exe - replacement launcher for Windows 10 OOBE that runs the Vista wizard.
  *
- * Registered as the "Debugger" of msoobe.exe (Image File Execution Options): when oobeldr.exe starts
- * msoobe.exe, Windows runs   oobelaunch.exe <original command line>   instead. This program starts
- * <its folder>\oobe\vistamsoobe.exe with the same arguments, waits for it and returns its exit code
- * (oobeldr.exe reads that: done / restart / switch to audit mode).
- * It never starts a program called msoobe.exe while the redirect is active, so it cannot loop.
+ * Installed as System32\oobe\msoobe.exe in a disposable VM. It starts
+ * C:\vista-oobe\oobe\vistamsoobe.exe with the original arguments, waits for it and
+ * returns its exit code (oobeldr.exe reads that: done / restart / switch to audit mode).
  *
- * Safety net: if the Vista wizard cannot be started, crashes, or fails at once, the redirect is removed from
- * the registry and Windows' own msoobe.exe is run with the original command line, so setup can finish and
- * the log can be read. Creating C:\vista-oobe\disable.txt does the same without starting the Vista wizard.
+ * Safety net: on failure, the preserved Windows binary at
+ * C:\vista-oobe\original-oobe\msoobe.exe runs with the original command line.
+ * Creating C:\vista-oobe\disable.txt selects that native wizard directly.
  *
- * Build: x86_64-w64-mingw32-gcc -O2 -Wall -mwindows -municode -static -o oobelaunch.exe oobelaunch.c
+ * Build: x86_64-w64-mingw32-gcc -O2 -Wall -mwindows -municode -static -o oobelaunch.exe oobelaunch.c -lwtsapi32 -luserenv
  */
 #include <windows.h>
 #include <tlhelp32.h>
@@ -39,6 +37,8 @@ static void Log(const wchar_t* fmt, ...) {
     LogTo(L"C:\\vista-oobe\\vista-oobe.log", u8, k - 1);           /* second copy, easy to find */
 }
 
+static int g_directReplacement;
+
 /* skips one (possibly quoted) token of a command line */
 static const wchar_t* SkipToken(const wchar_t* s) {
     while (*s == L' ') s++;
@@ -48,19 +48,34 @@ static const wchar_t* SkipToken(const wchar_t* s) {
     return s;
 }
 
-/* Removes the redirect so Windows' own msoobe.exe is used from now on, then runs it with the original command line. */
+/* Runs the preserved Windows wizard in direct-replacement mode, or removes the old IFEO redirect in legacy mode. */
 static int RunWindowsOwn(const wchar_t* original, const wchar_t* why) {
     Log(L"FALLBACK to Windows' own msoobe.exe: %s", why);
     { HANDLE bf = CreateFileW(L"C:\\vista-oobe\\bridge-stop.flag", GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL); if (bf != INVALID_HANDLE_VALUE) CloseHandle(bf); }
-    HKEY k;
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\msoobe.exe", 0, KEY_SET_VALUE, &k) == ERROR_SUCCESS) {
-        LONG r = RegDeleteValueW(k, L"Debugger"); RegCloseKey(k);
-        Log(L"redirect removed from the registry (result %ld)", r);
-    } else Log(L"could not open the redirect key (error %lu)", GetLastError());
-    wchar_t line[4096]; wcsncpy(line, original, 4095); line[4095] = 0;
+    wchar_t line[4096], native[MAX_PATH];
+    LPCWSTR app = NULL;
+    if (g_directReplacement) {
+        _snwprintf(native, MAX_PATH, L"C:\\vista-oobe\\original-oobe\\msoobe.exe");
+        native[MAX_PATH - 1] = 0;
+        const wchar_t* args = SkipToken(original);
+        _snwprintf(line, 4095, L"\"%s\"%s%s", native, *args ? L" " : L"", args);
+        line[4095] = 0;
+        app = native;
+        if (GetFileAttributesW(native) == INVALID_FILE_ATTRIBUTES) {
+            Log(L"ERROR: preserved Windows msoobe.exe is missing: %s", native);
+            return 1;
+        }
+    } else {
+        HKEY k;
+        if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\msoobe.exe", 0, KEY_SET_VALUE, &k) == ERROR_SUCCESS) {
+            LONG r = RegDeleteValueW(k, L"Debugger"); RegCloseKey(k);
+            Log(L"legacy IFEO redirect removed from the registry (result %ld)", r);
+        } else Log(L"could not open the legacy IFEO key (error %lu)", GetLastError());
+        wcsncpy(line, original, 4095); line[4095] = 0;
+    }
     STARTUPINFOW si; memset(&si, 0, sizeof(si)); si.cb = sizeof(si); GetStartupInfoW(&si);
     PROCESS_INFORMATION pi;
-    if (!CreateProcessW(NULL, line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
+    if (!CreateProcessW(app, line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
         Log(L"ERROR: could not start Windows' msoobe.exe (%lu)", GetLastError());
         return 1;
     }
@@ -194,7 +209,10 @@ static BOOL CALLBACK FirstUXEnum(HWND h, LPARAM lp) {
 }
 static int RunBridge(void) {
     if (GetFileAttributesW(L"C:\\vista-oobe\\nobridge.txt") != INVALID_FILE_ATTRIBUTES) return 0;
-    wchar_t jpg[MAX_PATH]; GetWindowsDirectoryW(jpg, MAX_PATH - 40); wcscat(jpg, L"\\System32\\oobe\\msoobe.jpg");
+    wchar_t jpg[MAX_PATH] = L"C:\\vista-oobe\\oobe\\msoobe.jpg";
+    if (GetFileAttributesW(jpg) == INVALID_FILE_ATTRIBUTES) {
+        GetWindowsDirectoryW(jpg, MAX_PATH - 40); wcscat(jpg, L"\\System32\\oobe\\msoobe.jpg");
+    }
     g_bridgeBmp = LoadJpgBitmap(jpg);
     Log(L"bridge: started (background %s)", g_bridgeBmp ? L"loaded" : L"NOT loaded, plain colour");
     WNDCLASSW wc; memset(&wc, 0, sizeof(wc)); wc.lpfnWndProc = BridgeProc; wc.hInstance = GetModuleHandleW(NULL); wc.lpszClassName = L"VistaOobeBridge"; wc.hCursor = NULL;
@@ -481,13 +499,15 @@ int WINAPI wWinMain(HINSTANCE h, HINSTANCE p, LPWSTR cmd, int show) {
     Log(L"started with command line: %s", full);
     const wchar_t* afterMe = SkipToken(full);            /* the original command line: msoobe.exe path + its arguments */
     const wchar_t* args = SkipToken(afterMe);
+    wchar_t self[MAX_PATH];
+    GetModuleFileNameW(NULL, self, MAX_PATH);
+    const wchar_t* selfName = wcsrchr(self, L'\\');
+    g_directReplacement = !_wcsicmp(selfName ? selfName + 1 : self, L"msoobe.exe");
     Log(L"original program: %.200s", afterMe);
     Log(L"arguments passed on: [%s]", args);
 
-    wchar_t home[MAX_PATH]; GetModuleFileNameW(NULL, home, MAX_PATH);
-    wchar_t* sl = wcsrchr(home, L'\\'); if (sl) *sl = 0;
-    wchar_t exe[MAX_PATH * 2];
-    _snwprintf(exe, MAX_PATH * 2, L"%s\\oobe\\vistamsoobe.exe", home); exe[MAX_PATH * 2 - 1] = 0;
+    wchar_t exe[MAX_PATH];
+    _snwprintf(exe, MAX_PATH, L"C:\\vista-oobe\\oobe\\vistamsoobe.exe"); exe[MAX_PATH - 1] = 0;
 
     if (GetFileAttributesW(L"C:\\vista-oobe\\disable.txt") != INVALID_FILE_ATTRIBUTES)
         return RunWindowsOwn(afterMe, L"C:\\vista-oobe\\disable.txt exists");

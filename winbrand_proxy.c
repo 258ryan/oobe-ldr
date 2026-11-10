@@ -88,6 +88,13 @@ static void Log(const wchar_t* fmt, ...) {
     }
 }
 
+static void LogModulePath(const wchar_t* name) {
+    HMODULE m = GetModuleHandleW(name);
+    wchar_t path[MAX_PATH] = L"(not loaded)";
+    if (m) GetModuleFileNameW(m, path, MAX_PATH);
+    Log(L"[module] %s -> %s", name, path);
+}
+
 /* memory check without exceptions (IsBadReadPtr raises a handled access violation that the crash logger would report) */
 static int Readable(const void* p, size_t n) {
     MEMORY_BASIC_INFORMATION mbi;
@@ -320,9 +327,9 @@ static BOOL WINAPI Hook_DestroyWindow(HWND h) {
     return g_origDW(h);
 }
 
-/* ---- Vista's DUser has a default style sheet "common" as UIFILE 1010 (XML text); Windows 10's DUser has the same
-   resource id but in a compiled binary format ("duib") that the wizard's own XML parser cannot read. The wizard looks up
-   its sheet "common" there, fails, and the page set-up is abandoned. Serve an XML version of that resource instead. ---- */
+/* ---- Vista's DUser has a default style sheet "common" as UIFILE 1010 (XML text). Some newer DUser builds keep
+   compatible XML there too; others use a compiled format the Vista parser cannot read. Preserve usable XML and
+   substitute a minimal sheet only when the resource is missing or not XML. ---- */
 static const char g_commonXml[] =
 "<duixml>\r\n<stylesheets>\r\n<style resid=\"common\">\r\n"
 "<element font=\"gtf(TextStyle, TEXT_BODYTEXT, 0)\" foreground=\"windowtext\"/>\r\n"
@@ -335,10 +342,27 @@ typedef HGLOBAL (WINAPI *LoadRes_t)(HMODULE, HRSRC);
 typedef LPVOID (WINAPI *LockRes_t)(HGLOBAL);
 typedef DWORD (WINAPI *SizeRes_t)(HMODULE, HRSRC);
 static FindResW_t g_origFR; static LoadRes_t g_origLR; static LockRes_t g_origKR; static SizeRes_t g_origSR;
+static int IsXmlUiFileResource(HMODULE m, HRSRC r) {
+    if (!r || !g_origLR || !g_origKR || !g_origSR) return 0;
+    DWORD size = g_origSR(m, r);
+    if (size < 7 || size > 1024 * 1024) return 0;
+    HGLOBAL loaded = g_origLR(m, r);
+    const BYTE* data = loaded ? (const BYTE*)g_origKR(loaded) : NULL;
+    if (!data || !Readable(data, size < 16 ? size : 16)) return 0;
+    DWORD offset = size >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF ? 3 : 0;
+    while (offset < size && offset < 16 && (data[offset] == ' ' || data[offset] == '\t' || data[offset] == '\r' || data[offset] == '\n')) offset++;
+    return size - offset >= 7 && Readable(data + offset, 7) && !memcmp(data + offset, "<duixml", 7);
+}
 static HRSRC WINAPI Hook_FindResourceW(HMODULE m, LPCWSTR n, LPCWSTR t) {
-    if (m && m == GetModuleHandleW(L"duser.dll") && (ULONG_PTR)n == 1010) {
+    if (m && m == GetModuleHandleW(L"duser.dll") && (ULONG_PTR)n == 1010 && t && (ULONG_PTR)t > 0xFFFF && !_wcsicmp(t, L"UIFILE")) {
+        HRSRC original = g_origFR(m, n, t);
+        if (original && IsXmlUiFileResource(m, original)) {
+            static volatile LONG passed = 0;
+            if (InterlockedIncrement(&passed) <= 3) Log(L"[resource] duser.dll UIFILE 1010 contains XML; preserving the full system style sheet");
+            return original;
+        }
         static volatile LONG k = 0;
-        if (InterlockedIncrement(&k) <= 3) Log(L"[resource] duser.dll UIFILE 1010 (default style sheet 'common') served as XML instead of Windows 10's binary version");
+        if (InterlockedIncrement(&k) <= 3) Log(L"[resource] duser.dll UIFILE 1010 is missing or non-XML; supplying compatibility XML");
         return (HRSRC)g_fakeRes;
     }
     return g_origFR(m, n, t);
@@ -486,7 +510,11 @@ static int PatchExe(void) {
             iat[i] = (ULONGLONG)hook;
             VirtualProtect(&iat[i], 8, op, &op);
         }
-        if (found) PatchExtras();
+        if (found) {
+            LogModulePath(L"duser.dll");
+            LogModulePath(L"DUI70.dll");
+            PatchExtras();
+        }
         return found ? 1 : -1;
     }
     return -1;

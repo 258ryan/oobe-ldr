@@ -1,0 +1,45 @@
+name: Build Windows binaries
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install MinGW-w64
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends gcc-mingw-w64-x86-64
+
+      - name: Build Windows binaries
+        run: |
+          mkdir -p dist
+          x86_64-w64-mingw32-gcc -O2 -Wall -Werror -mwindows -municode -static \
+            -o dist/oobelaunch.exe oobelaunch.c -lwtsapi32 -luserenv
+          x86_64-w64-mingw32-gcc -O2 -Wall -Werror -shared \
+            -o dist/winbrand.dll winbrand_proxy.c winbrand.def -static-libgcc -lkernel32 -lgdi32
+
+      - name: Verify PE outputs
+        run: |
+          file dist/oobelaunch.exe dist/winbrand.dll
+          x86_64-w64-mingw32-objdump -p dist/oobelaunch.exe | grep -q 'pei-x86-64'
+          x86_64-w64-mingw32-objdump -p dist/winbrand.dll | grep -q 'pei-x86-64'
+          x86_64-w64-mingw32-objdump -p dist/winbrand.dll | grep -q 'BrandingLoadBitmap'
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-oobe-binaries
+          path: |
+            dist/oobelaunch.exe
+            dist/winbrand.dll
+          if-no-files-found: error

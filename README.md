@@ -1,33 +1,49 @@
-# Vista OOBE on Windows 10 - step 2: first trial run (VM only)
+# Vista OOBE replacement on Windows 10 (VM only)
 
-**Do this only in a VM, after taking a snapshot.** The Vista wizard creates the user account, sets the computer
-name, time zone and so on. If anything goes wrong, revert the snapshot.
+**Use only in a disposable VM, after taking a snapshot.** The installer replaces the protected
+`%WINDIR%\System32\oobe\msoobe.exe` with this project's launcher; it does not use IFEO to redirect execution.
+The original Windows OOBE folder is backed up to `C:\vista-oobe\original-oobe` for launcher fallback and rollback.
+Windows servicing can replace the system binary, and replacing it can prevent setup from starting; keep the VM snapshot.
 
 ## What it does
 
-* `oobeldr.exe /system` (Windows 10's own loader) still starts `msoobe.exe` and waits for its exit code.
-* `ifeo-install.reg` makes Windows run `C:\vista-oobe\oobelaunch.exe` instead of `msoobe.exe`
-  (Image File Execution Options "Debugger"; no Windows file is replaced). The launcher starts the Vista wizard,
-  renamed `vistamsoobe.exe`, with the same arguments, waits, and returns its exit code.
-* The Vista wizard imports `winbrand.dll`; the proxy `winbrand.dll` next to it is loaded first. It forwards
+* Windows' own OOBE loader starts the replacement `msoobe.exe` and waits for its exit code.
+* The replacement starts the Vista wizard, renamed `vistamsoobe.exe`, with the original arguments, waits, and returns its exit code.
+* If the Vista wizard cannot start or fails, the replacement starts the preserved Windows wizard from
+  `C:\vista-oobe\original-oobe\msoobe.exe`. `C:\vista-oobe\disable.txt` selects the Windows wizard without trying Vista.
+* The Vista wizard imports `winbrand.dll`; the proxy `winbrand.dll` staged beside it is loaded first. It forwards
   `BrandingLoadBitmap` to the real one, fixes DUser's `SetGadgetRootInfo` (old 0x20-byte structure -> 0x30),
   records where the ordinal imports land (`shell32 #262/#754`, `userenv #206`, `Input #104-108`) and logs
   crashes with a call stack.
+* Every Vista `msoobe.exe.mui` language folder found in the supplied OOBE source is staged beside
+  `vistamsoobe.exe` under the same culture name (for example `en-US\vistamsoobe.exe.mui`). The wizard uses
+  Vista's available translations and Windows' normal MUI language fallback; languages absent from the source
+  remain untranslated. The Windows native fallback keeps its original files and language resources.
+* The compatibility hooks are process-local hooks installed by the `winbrand.dll` proxy inside the Vista
+  wizard—not system-wide hooks—and are not removed by replacing the System32 launcher.
+* The supplied modded `DUser.dll` and `dui72.dll` are staged beside `vistamsoobe.exe` as `DUser.dll` and
+  `DUI70.dll` (the latter's internal PE name). Windows' normal app-local DLL search then selects them for
+  the Vista wizard rather than replacing the OS copies. The proxy logs the resolved module paths as `[module]`.
 * Everything is written to `C:\Windows\Temp\vista-oobe.log`.
 
 ## Steps (in the Windows 10 VM)
 
-1. Copy to the VM: this folder and the Vista `oobe` folder (from the .tar.gz).
-2. As Administrator: `prepare-vista-oobe.bat C:\path\to\vista\oobe`
-   (creates `C:\vista-oobe`; also puts `msoobe.jpg` and the Vista help texts into `%windir%\System32\oobe`,
-   after taking ownership of that folder).
-3. **Take a snapshot.**
-4. Double-click `ifeo-install.reg`.
-5. Run `%windir%\System32\Sysprep\sysprep.exe /oobe /reboot` - Windows restarts into OOBE, which should now show
+1. Copy to the VM: this folder, the Vista `oobe` folder (from the .tar.gz), and the supplied modded `DUser.dll`
+   and `dui72.dll`.
+2. In the VM, take a snapshot. From an elevated prompt run
+   `prepare-vista-oobe.bat C:\path\to\vista\oobe C:\path\to\modded\duser.dll C:\path\to\dui72.dll`.
+   It copies the wizard and its optional background into `C:\vista-oobe`, preserves the original OOBE folder,
+   and installs the launcher as `System32\oobe\msoobe.exe`. It no longer grants broad permissions on the OOBE folder.
+3. Run `%windir%\System32\Sysprep\sysprep.exe /oobe /reboot` - Windows restarts into OOBE, which should now show
    the Vista wizard.
-6. Send me `C:\Windows\Temp\vista-oobe.log` (also if nothing appears, or the screen stays blank/transition screen).
+4. Send `C:\Windows\Temp\vista-oobe.log` if anything fails or the screen stays blank/transition screen.
 
-To remove the redirect: `ifeo-uninstall.reg` (or revert the snapshot).
+To restore the Windows binary, run `restore-system-msoobe.bat` elevated before starting OOBE, or revert the snapshot.
+Do not delete `C:\vista-oobe\original-oobe`; it contains both the fallback executable and the rollback copy.
+The legacy `ifeo-install.reg` no longer installs a debugger redirect and is not part of this flow.
+
+The update notes below describe diagnostics from earlier IFEO-based trials. Do not follow their historical
+instructions to import `ifeo-install.reg`; use the direct replacement workflow above.
 
 ## Not known yet (the log will tell)
 
@@ -36,36 +52,37 @@ To remove the redirect: `ifeo-uninstall.reg` (or revert the snapshot).
 * How the wizard creates the account on Windows 10 (it does the work itself, so this is the part to watch).
 * Whether the renamed `vistamsoobe.exe.mui` loads (the wizard text would be missing if not).
 
-Build (Linux): see the commands at the top of each .c file; `impcheck.exe` is step 1 (done).
+Build (Linux): `x86_64-w64-mingw32-gcc -O2 -Wall -mwindows -municode -static -o oobelaunch.exe oobelaunch.c -lwtsapi32 -luserenv`.
+`impcheck.exe` was the initial compatibility check.
+Rebuild the proxy after changes with `x86_64-w64-mingw32-gcc -O2 -Wall -Werror -shared -o winbrand.dll winbrand_proxy.c winbrand.def -static-libgcc -lkernel32 -lgdi32`.
 
 
 ## If it crashes and you cannot get the log
 
-**New:** if the Vista wizard cannot start, crashes, or fails at once, `oobelaunch.exe` now removes the redirect and
-runs Windows 10's own wizard, so setup finishes and you can read the log afterwards. The log is written to two
+If the Vista wizard cannot start, crashes, or fails at once, the replacement runs the preserved Windows wizard,
+so setup can finish and you can read the log afterwards. The log is written to two
 places: `C:\vista-oobe\vista-oobe.log` (easiest) and `C:\Windows\Temp\vista-oobe.log`.
 
 If you are stuck inside OOBE:
 
 * Press **Shift+F10** in OOBE for a command prompt, then `notepad C:\vista-oobe\vista-oobe.log`
-  (or `type C:\vista-oobe\vista-oobe.log`). To stop the redirect right there:
-  `echo x > C:\vista-oobe\disable.txt`  (the launcher then runs Windows' own wizard) or
-  `reg delete "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\msoobe.exe" /f`.
+  (or `type C:\vista-oobe\vista-oobe.log`). To select Windows' own wizard, use
+  `echo x > C:\vista-oobe\disable.txt`. To roll back the file replacement, run
+  `powershell -NoProfile -ExecutionPolicy Bypass -File C:\vista-oobe\restore-system-msoobe.ps1`
+  from an elevated prompt, or revert the VM snapshot.
 * If OOBE restarts in a loop and Shift+F10 does not help: boot the VM into the Windows Recovery Environment
   (or from the Windows 10 ISO: Repair your computer > Troubleshoot > Command Prompt), find the Windows drive
   (try `dir C:\`, `dir D:\` ...) and run, with D: replaced by that drive:
       type D:\vista-oobe\vista-oobe.log
       type D:\Windows\Temp\vista-oobe.log
       echo x > D:\vista-oobe\disable.txt
-  or remove the redirect from the offline registry:
-      reg load HKLM\OFF D:\Windows\System32\config\SOFTWARE
-      reg delete "HKLM\OFF\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\msoobe.exe" /f
-      reg unload HKLM\OFF
+  If offline rollback is needed, restore `D:\Windows\System32\oobe\msoobe.exe` from
+  `D:\vista-oobe\original-oobe\msoobe.exe` after taking a copy of the current file, or revert the VM snapshot.
 * Or revert the snapshot, and use the Hyper-V / VirtualBox / VMware "attach virtual disk to another VM" feature to read
   `C:\vista-oobe\vista-oobe.log` from the crashed disk.
 
-If **no log file exists at all**, neither the launcher nor the proxy ran: tell me what you saw on screen
-(a blank screen, the Windows 10 wizard, an error message) and whether `C:\vista-oobe\oobelaunch.exe` exists.
+If **no log file exists at all**, neither the launcher nor the proxy ran: check whether
+`%WINDIR%\System32\oobe\msoobe.exe` and `C:\vista-oobe\oobelaunch.exe` exist.
 
 
 ## Update (after the first log)
@@ -80,8 +97,8 @@ the first launcher did not treat as a failure. Now:
 * On a crash the proxy writes `C:\vista-oobe\crash.flag`; `oobelaunch.exe` sees it and falls back to Windows' own wizard.
 
 To update an existing setup: copy the new `winbrand.dll` to `C:\vista-oobe\oobe\` and `oobelaunch.exe` to `C:\vista-oobe\`
-(delete `C:\vista-oobe\vista-oobe.log` first so the new log is short). Then repeat the sysprep step from a snapshot
-taken BEFORE the first run (the fallback may already have removed the redirect: import `ifeo-install.reg` again).
+(delete `C:\vista-oobe\vista-oobe.log` first so the new log is short), then rerun the preparation script before Sysprep.
+The old IFEO re-import step no longer applies.
 
 
 ## Update 2 (after the second log)
@@ -95,7 +112,7 @@ The new `winbrand.dll` additionally logs (a) readable string arguments of each D
 (`[stack] ...`) at the first `DeleteHandle` / `CreateGadget` calls: the functions on that stack are the ones that gave up.
 
 To update: copy the new `winbrand.dll` to `C:\vista-oobe\oobe\`, delete `C:\vista-oobe\vista-oobe.log`,
-import `ifeo-install.reg` again (the fallback removed it), and run `sysprep /oobe /reboot` as before.
+rerun the preparation script, and run `sysprep /oobe /reboot` as before.
 
 
 ## Update 3 (after reading Windows 10's duser.dll, 10.0.19041.3636)
@@ -125,16 +142,16 @@ To update: copy the new `winbrand.dll` to `C:\vista-oobe\oobe\`, delete `C:\vist
 * `oobelaunch.exe` also falls back to Windows' own wizard when the Vista wizard exits with 0xFF (its own failure code).
 
 To update: copy the new `winbrand.dll` to `C:\vista-oobe\oobe\` and the new `oobelaunch.exe` to `C:\vista-oobe\`,
-delete `C:\vista-oobe\vista-oobe.log`, import `ifeo-install.reg` again (the fallback removes it), revert to your snapshot,
-run `sysprep /oobe /reboot`, and send the log. Look for `[exe-debug]`, `[guard]` and `[stack]` lines.
+delete `C:\vista-oobe\vista-oobe.log`, rerun the preparation script, revert to your snapshot, and run
+`sysprep /oobe /reboot`. Look for `[exe-debug]`, `[guard]` and `[stack]` lines.
 
 
 ## Update 5 (after the fifth log) - found the reason the pages fail
 
 The wizard's pages use the style sheet `common`, which Vista keeps inside `duser.dll` as UIFILE resource 1010 (XML text).
-Windows 10's `duser.dll` has a resource with the same id, but in a compiled binary format (`duib`) that the wizard's own XML
-parser cannot read. The lookup therefore failed, the first element could not be set up, the page was abandoned and the wizard
-exited. `winbrand.dll` now serves a small XML `common` sheet for that resource (`[resource]` line in the log).
+Some newer `duser.dll` builds use a compiled binary format there (`duib`) that the Vista parser cannot read; the supplied
+modded DUser build instead contains a full XML style sheet. `winbrand.dll` now passes through the full sheet when the
+resource is XML, and supplies its minimal XML fallback only when the resource is missing or binary (`[resource]` log line).
 Also: the DUser clean-up crash is now caught directly (`[guard] DUser clean-up on a null gadget skipped`) instead of
 relying on the `DestroyWindow` hook (which was never called in the last log).
 
@@ -211,7 +228,7 @@ own full-screen `FirstUXWndClass` window (winlogon.exe) was IN FRONT of it (z-or
 screen you see between the phases. `Failed to install product key [hr=0x8000ffff]` is harmless (Vista's licensing call on Windows 10).
 
 * `oobelaunch.exe` puts every visible wizard window (backdrop, dialog) TOPMOST, so they stay above `FirstUXWndClass`.
-* Bridge: `oobelaunch.exe` starts a second copy of itself (`/bridge`) before the wizard: a full-screen window with Vista's background (`Windows\System32\oobe\msoobe.jpg`),
+* Bridge: `oobelaunch.exe` starts a second copy of itself (`/bridge`) before the wizard: a full-screen window with Vista's background (`C:\vista-oobe\oobe\msoobe.jpg`),
   topmost, which stays until `FirstUXWndClass` has been gone for 6 s (max 10 min) - so the gaps and the move to the logon screen show the Vista background.
   It is closed at once if the launcher falls back to Windows' own wizard (`bridge-stop.flag`). `C:\vista-oobe\nobridge.txt` switches it off.
 * `winbrand.dll`: like the Windhawk "DWM Unextend Frames" mod, `uxtheme!IsCompositionActive` (FALSE), `dwmapi!DwmIsCompositionEnabled` (FALSE),
