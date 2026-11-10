@@ -1,0 +1,21 @@
+Windows Registry Editor Version 5.00
+
+; From now on, when Windows starts msoobe.exe, C:\vista-oobe\oobelaunch.exe runs instead and starts the Vista wizard.
+; VM ONLY, after taking a snapshot.
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\msoobe.exe]
+"Debugger"="C:\\vista-oobe\\oobelaunch.exe"
+
+; Windows 10 OOBE extras (VM only)
+; skip Windows 10's privacy experience
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\OOBE]
+"DisablePrivacyExperience"=dword:00000001
+
+; show the mouse cursor during OOBE (the launcher also sets this)
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System]
+"EnableCursorSuppression"=dword:00000000
+; no Windows 10 first sign-in animation ("Hi / We're getting everything ready for you / This might take several minutes / Don't turn off your PC")
+"EnableFirstLogonAnimation"=dword:00000000
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon]
+"EnableFirstLogonAnimation"=dword:00000000

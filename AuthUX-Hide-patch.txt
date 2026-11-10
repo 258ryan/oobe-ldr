@@ -1,0 +1,34 @@
+Patch for AuthUX-bsdr (shell/auth/authux/consolelogon/lib/authux.cpp): AuthUX::Hide() currently does nothing, so the full-screen window
+"AUTHUI.DLL: LogonUI Logon Window" stays up when Windows hides the logon UI without stopping it (seen after the first sign-in of a new account).
+Replace
+
+HRESULT AuthUX::Hide()
+{
+	return S_OK;
+}
+
+with
+
+static BOOL CALLBACK HideLogonWindowsProc(HWND hWnd, LPARAM)
+{
+	DWORD pid = 0;
+	GetWindowThreadProcessId(hWnd, &pid);
+	if (pid == GetCurrentProcessId())
+	{
+		WCHAR cls[96] = {};
+		if (GetClassNameW(hWnd, cls, ARRAYSIZE(cls)) && wcscmp(cls, L"AUTHUI.DLL: LogonUI Logon Window") == 0)
+		{
+			ShowWindowAsync(hWnd, SW_HIDE);   // async: the UI thread owns the window
+		}
+	}
+	return TRUE;
+}
+
+HRESULT AuthUX::Hide()
+{
+	EnumWindows(HideLogonWindowsProc, 0);
+	return S_OK;
+}
+
+Untested. A later ShowCredentialView / lock request has to show the window again (check that the main window is shown again when RequestCredentials/Lock arrives).
+Also: AuthUX::Stop() writes C:\log.txt ("AuthUX::Stop called"): if that file does not exist after the overlay appeared, Stop was never called.

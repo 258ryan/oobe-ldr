@@ -1,0 +1,16 @@
+Windows Registry Editor Version 5.00
+
+; Removes the redirect: Windows uses its own msoobe.exe again.
+
+[-HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\msoobe.exe]
+
+; undo the Windows 10 OOBE extras of ifeo-install.reg
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\OOBE]
+"DisablePrivacyExperience"=-
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System]
+"EnableCursorSuppression"=-
+"EnableFirstLogonAnimation"=-
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon]
+"EnableFirstLogonAnimation"=-
