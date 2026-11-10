@@ -9,6 +9,23 @@ $staging = Join-Path $root 'original-oobe.staging'
 $aclBackup = Join-Path $backup 'msoobe.acl.sddl'
 $installedHashFile = Join-Path $root 'msoobe-launcher.sha256'
 
+function Replace-SystemFile {
+    param(
+        [string]$Source,
+        [string]$Destination
+    )
+
+    $directory = Split-Path -LiteralPath $Destination -Parent
+    $temporaryBackup = Join-Path $directory ("msoobe.exe.{0}.bak" -f [Guid]::NewGuid().ToString('N'))
+    try {
+        [IO.File]::Replace($Source, $Destination, $temporaryBackup)
+    } finally {
+        if (Test-Path -LiteralPath $temporaryBackup) {
+            Remove-Item -LiteralPath $temporaryBackup -Force
+        }
+    }
+}
+
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -85,7 +102,7 @@ if ($newHash -eq $launcherHash) {
         if ($LASTEXITCODE -ne 0) { throw "icacls could not grant temporary access (exit code $LASTEXITCODE)." }
 
         Copy-Item -LiteralPath $launcher -Destination $replacement
-        [IO.File]::Replace($replacement, $target, $null)
+        Replace-SystemFile -Source $replacement -Destination $target
 
         try {
             if (Test-Path -LiteralPath $aclBackup) {
@@ -108,7 +125,7 @@ if ($newHash -eq $launcherHash) {
         if (Test-Path -LiteralPath $replacement) { Remove-Item -LiteralPath $replacement -Force }
         if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -eq $launcherHash) {
             Copy-Item -LiteralPath $backupExe -Destination $replacement
-            [IO.File]::Replace($replacement, $target, $null)
+            Replace-SystemFile -Source $replacement -Destination $target
             try { Set-Acl -LiteralPath $target -AclObject $originalAcl } catch { }
             & icacls.exe $target /setowner 'NT SERVICE\TrustedInstaller' /C | Out-Null
         }

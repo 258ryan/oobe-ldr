@@ -8,6 +8,23 @@ $backupExe = Join-Path $backup 'msoobe.exe'
 $aclBackup = Join-Path $backup 'msoobe.acl.sddl'
 $replacement = "$target.restore"
 
+function Replace-SystemFile {
+    param(
+        [string]$Source,
+        [string]$Destination
+    )
+
+    $directory = Split-Path -LiteralPath $Destination -Parent
+    $temporaryBackup = Join-Path $directory ("msoobe.exe.{0}.bak" -f [Guid]::NewGuid().ToString('N'))
+    try {
+        [IO.File]::Replace($Source, $Destination, $temporaryBackup)
+    } finally {
+        if (Test-Path -LiteralPath $temporaryBackup) {
+            Remove-Item -LiteralPath $temporaryBackup -Force
+        }
+    }
+}
+
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -40,7 +57,7 @@ if ($LASTEXITCODE -ne 0) { throw "takeown failed with exit code $LASTEXITCODE." 
 if ($LASTEXITCODE -ne 0) { throw "icacls could not grant temporary access (exit code $LASTEXITCODE)." }
 
 Copy-Item -LiteralPath $backupExe -Destination $replacement
-[IO.File]::Replace($replacement, $target, $null)
+Replace-SystemFile -Source $replacement -Destination $target
 try {
     Set-Acl -LiteralPath $target -AclObject $originalAcl
 } catch {
